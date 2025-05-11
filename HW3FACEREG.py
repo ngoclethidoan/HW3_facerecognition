@@ -3,7 +3,7 @@ from tkinter import filedialog
 from tkinter import font as tkfont
 # Create the main window
 root = tk.Tk()
-root.title("Left and Right Frames")
+root.title("Face recognition")
 root.geometry("800x500")
 
 # Maximize the window
