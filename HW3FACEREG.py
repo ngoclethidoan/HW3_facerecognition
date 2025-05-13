@@ -17,7 +17,7 @@ def video():
 # Adding File Menu and commands
 menu = tk.Menu(menubar, tearoff=0)
 menubar.add_cascade(label='Menu', menu=menu)
-menu.add_command(label='New File', command=video)
+menu.add_command(label='Open File', command=video)
 menu.add_command(label='WebCam', command=None)
 menu.add_separator()
 menu.add_command(label='Exit', command=root.destroy)
