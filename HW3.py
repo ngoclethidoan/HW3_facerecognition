@@ -18,3 +18,5 @@ class FaceDetectionApp:
         filemenu.add_command(label="Exit", command=None)
         menubar.add_cascade(label="Menu", menu=None)
         root.config(menu=menubar)
+
+        print('hello')
