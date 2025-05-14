@@ -7,7 +7,7 @@ class FaceDetectionApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Face Detection")
-        self.root.geometry("200x150")
+        self.root.geometry("800x600")
 
 
         # Menu
