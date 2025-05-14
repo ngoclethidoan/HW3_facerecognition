@@ -6,7 +6,7 @@ from PIL import Image, ImageTk
 class FaceDetectionApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Face Detection")
+        self.root.title("Face Recognition")
         self.root.geometry("800x600")
 
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
