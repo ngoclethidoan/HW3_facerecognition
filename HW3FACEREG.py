@@ -9,6 +9,9 @@ class FaceDetectionApp:
         self.root.title("Face Detection")
         self.root.geometry("800x600")
 
+        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        self.image_label = tk.Label(root)
+        self.image_label.pack(expand=True, fill=tk.BOTH)
 
         # Menu
         menubar = tk.Menu(root)
@@ -16,9 +19,13 @@ class FaceDetectionApp:
         filemenu.add_command(label="Open Video", command=None)
         filemenu.add_command(label="Webcam", command=None)
         filemenu.add_separator()
-        filemenu.add_command(label="Exit", command=None)
+        filemenu.add_command(label="Exit", command=self.exit_app)
         menubar.add_cascade(label="Menu", menu=filemenu)
         root.config(menu=menubar)
+
+    def exit_app(self):
+        self.root.quit()
+
 
     def detect_faces(self, frame):
         gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
