@@ -20,6 +20,13 @@ class FaceDetectionApp:
         menubar.add_cascade(label="Menu", menu=filemenu)
         root.config(menu=menubar)
 
+    def detect_faces(self, frame):
+        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        faces = self.face_cascade.detectMultiScale(gray, 1.1, 5)
+        for (x, y, w, h) in faces:
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        return frame
+        
 
 if __name__ == '__main__':
     root = tk.Tk()
