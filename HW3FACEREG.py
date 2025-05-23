@@ -3,108 +3,65 @@ from tkinter import filedialog, messagebox
 import cv2
 from PIL import Image, ImageTk
 import threading
-import time
+import numpy as np # Import numpy for creating blank images
 
 class FaceDetectionApp:
+    """
+    A Tkinter application for real-time face detection from video files or webcam.
+    Optimized to prevent white frames and ensure smooth display.
+    """
     def __init__(self, root):
+        """
+        Initializes the FaceDetectionApp.
+
+        Args:
+            root: The main Tkinter window.
+        """
         self.root = root
-        self.root.title("Face Recognition")
-        self.root.geometry("800x600")
+        self.root.title("Face Detection (Optimized)")
+        # Set initial geometry, will be adjusted by image_label.pack(expand=True, fill=tk.BOTH)
+        self.root.geometry("640x480") 
 
+        # Load the pre-trained Haar Cascade classifier for face detection
+        # This path points to the default Haar Cascade XML file provided by OpenCV
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        self.video_capture = None
-        self.is_running = False
-        self.is_webcam = False
-        self.video_fps = 30
+        
+        self.video_capture = None  # Stores the OpenCV VideoCapture object
+        self.is_running = False    # Flag to control the video processing loop
+        self.is_webcam = False     # Flag to differentiate between webcam and video file input
+        self.last_good_frame_rgb = None # Stores the last successfully processed RGB frame for display
 
-        self.image_label = tk.Label(root)
+        # Create a Tkinter Label to display video frames
+        # Set its background to black to avoid white flashes when no frame is displayed
+        self.image_label = tk.Label(root, bg="black")
+        # Pack the label to fill the entire window, expanding with the window size
         self.image_label.pack(expand=True, fill=tk.BOTH)
 
-        # Menu
+        # Create a menubar for file operations
         menubar = tk.Menu(root)
-        filemenu = tk.Menu(menubar, tearoff=0)
+        filemenu = tk.Menu(menubar, tearoff=0) # tearoff=0 prevents a dashed line at the top of the menu
+
+        # Add commands to the File menu
         filemenu.add_command(label="Open Video", command=self.load_video)
         filemenu.add_command(label="Webcam", command=self.start_webcam)
         filemenu.add_command(label="Stop", command=self.stop_video)
-        filemenu.add_separator()
+        filemenu.add_separator() # Adds a visual separator
         filemenu.add_command(label="Exit", command=self.exit_app)
+        
+        # Add the File menu cascade to the menubar
         menubar.add_cascade(label="Menu", menu=filemenu)
+        # Configure the root window to use this menubar
         root.config(menu=menubar)
 
-    def process_frames(self):
-        frame_delay = 1.0 / self.video_fps
-        while self.is_running and self.video_capture and self.video_capture.isOpened():
-            start_time = time.time()
-
-            ret, frame = self.video_capture.read()
-            if not ret or frame is None:
-                print("⚠️ Warning: Frame not read properly.")
-                time.sleep(0.05)
-                continue
-
-            if self.is_webcam:
-                frame = cv2.flip(frame, 1)
-
-            try:
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame_faces = self.detect_faces(frame_rgb)
-                self.show_image(frame_faces)
-            except Exception as e:
-                print(f"⚠️ Error processing frame: {e}")
-                continue
-
-            elapsed = time.time() - start_time
-            time_to_sleep = max(0, frame_delay - elapsed)
-            time.sleep(time_to_sleep)
-
-    def start_webcam(self):
-        self.stop_video()
-        self.video_capture = cv2.VideoCapture(0)
-        if self.video_capture.isOpened():
-            self.video_fps = 720  # Webcam thường khoảng 30 FPS
-            self.is_running = True
-            self.is_webcam = True
-            threading.Thread(target=self.process_frames, daemon=True).start()
-        else:
-            messagebox.showerror("Error", "Could not open webcam.")
-
-    def load_video(self):
-        file_path = filedialog.askopenfilename(filetypes=[("Video files", "*.mp4;*.avi;*.mov;*.wmv")])
-        if file_path:
-            self.stop_video()
-            self.video_capture = cv2.VideoCapture(file_path)
-            if self.video_capture.isOpened():
-                fps = self.video_capture.get(cv2.CAP_PROP_FPS)
-                self.video_fps = fps if fps > 0 else 30
-                print(f"Detected video FPS: {self.video_fps:.2f}")
-                self.is_running = True
-                self.is_webcam = False
-                threading.Thread(target=self.process_frames, daemon=True).start()
-            else:
-                messagebox.showerror("Error", "Could not open video file.")
-    def stop_video(self):
-        self.is_running = False
-        if self.video_capture and self.video_capture.isOpened():
-            self.video_capture.release()
-        self.video_capture = None
-        self.image_label.config(image="")
-        self.image_label.imgtk = None
-
-
-
-    def exit_app(self):
-        self.root.quit()
-
-
-    def detect_faces(self, frame):
-        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        faces = self.face_cascade.detectMultiScale(gray, 1.1, 5)
-        for (x, y, w, h) in faces:
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        return frame
+        # Bind the <Configure> event to update the blank image size when the window is resized
+        self.root.bind("<Configure>", self.on_resize)
         
+        # Display an initial blank black image when the app starts
+        self.show_blank_image()
+
+
 
 if __name__ == '__main__':
-    root = tk.Tk()
-    app = FaceDetectionApp(root)
-    root.mainloop()
+    root = tk.Tk() # Create the main Tkinter window
+    app = FaceDetectionApp(root) # Create an instance of the FaceDetectionApp
+    root.mainloop() # Start the Tkinter event loop
