@@ -3,245 +3,282 @@ from tkinter import filedialog, messagebox
 import cv2
 from PIL import Image, ImageTk
 import threading
-import numpy as np # Import numpy for creating blank images
+import numpy as np
+import pickle
+import face_recognition
 
 class FaceDetectionApp:
     """
-    A Tkinter application for real-time face detection from video files or webcam.
-    Optimized to prevent white frames and ensure smooth display.
+    Ứng dụng Tkinter để phát hiện và nhận dạng khuôn mặt theo thời gian thực từ tệp video hoặc webcam.
+    Được tối ưu hóa để ngăn chặn khung hình trắng và đảm bảo hiển thị mượt mà.
     """
     def __init__(self, root):
         """
-        Initializes the FaceDetectionApp.
+        Khởi tạo FaceDetectionApp.
 
         Args:
-            root: The main Tkinter window.
+            root: Cửa sổ Tkinter chính.
         """
-        self.root = root
-        self.root.title("Face Detection (Optimized)")
-        # Set initial geometry, will be adjusted by image_label.pack(expand=True, fill=tk.BOTH)
-        self.root.geometry("600x400") 
+        # Tải dữ liệu mã hóa khuôn mặt đã biết
+        try:
+            with open("encodings.pkl", "rb") as f:
+                data = pickle.load(f)
+            self.known_encodings = data["encodings"]
+            self.known_names = data["names"]
+            print(f"[INFO] Đã tải {len(self.known_encodings)} mã hóa khuôn mặt và tên.")
+        except FileNotFoundError:
+            messagebox.showerror("Lỗi", "Không tìm thấy file 'encodings.pkl'. Vui lòng đảm bảo file này tồn tại.")
+            self.known_encodings = []
+            self.known_names = []
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể tải 'encodings.pkl': {e}")
+            self.known_encodings = []
+            self.known_names = []
 
-        # Load the pre-trained Haar Cascade classifier for face detection
-        # This path points to the default Haar Cascade XML file provided by OpenCV
+        self.root = root
+        self.root.title("Face Recognition (Optimized)")
+
+        # Đặt kích thước cửa sổ theo kích thước màn hình
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        self.root.geometry(f"{screen_width}x{screen_height}+0+0")
+
+        # Load bộ phân loại Haar Cascade cho phát hiện khuôn mặt (chưa dùng trong code này)
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         
-        self.video_capture = None  # Stores the OpenCV VideoCapture object
-        self.is_running = False    # Flag to control the video processing loop
-        self.is_webcam = False     # Flag to differentiate between webcam and video file input
-        self.last_good_frame_rgb = None # Stores the last successfully processed RGB frame for display
+        self.video_capture = None  # Lưu trữ đối tượng OpenCV VideoCapture
+        self.is_running = False    # Cờ điều khiển vòng lặp xử lý video
+        self.is_webcam = False     # Cờ phân biệt giữa đầu vào webcam và tệp video
+        self.last_good_frame_rgb = None # Lưu trữ khung hình RGB được xử lý thành công cuối cùng để hiển thị
 
-        # Create a Tkinter Label to display video frames
-        # Set its background to black to avoid white flashes when no frame is displayed
+        # Biến để lưu trữ kết quả nhận dạng từ lần chạy gần nhất
+        self.current_face_locations = []
+        self.current_face_names = []
+
+        # Tạo một Tkinter Label để hiển thị khung hình video
+        # Đặt nền đen để tránh nháy trắng khi không có khung hình nào được hiển thị
         self.image_label = tk.Label(root, bg="black")
-        # Pack the label to fill the entire window, expanding with the window size
         self.image_label.pack(expand=True, fill=tk.BOTH)
 
-        # Create a menubar for file operations
+        # Tạo thanh menu
         menubar = tk.Menu(root)
-        filemenu = tk.Menu(menubar, tearoff=0) # tearoff=0 prevents a dashed line at the top of the menu
+        filemenu = tk.Menu(menubar, tearoff=0)
 
-        # Add commands to the File menu
-        filemenu.add_command(label="Open Video", command=self.load_video)
+        # Thêm lệnh vào menu File
+        filemenu.add_command(label="Mở Video", command=self.load_video)
         filemenu.add_command(label="Webcam", command=self.start_webcam)
-        filemenu.add_command(label="Stop", command=self.stop_video)
-        filemenu.add_separator() # Adds a visual separator
-        filemenu.add_command(label="Exit", command=self.exit_app)
+        filemenu.add_command(label="Dừng", command=self.stop_video)
+        filemenu.add_separator()
+        filemenu.add_command(label="Thoát", command=self.exit_app)
         
-        # Add the File menu cascade to the menubar
         menubar.add_cascade(label="Menu", menu=filemenu)
-        # Configure the root window to use this menubar
         root.config(menu=menubar)
 
-        # Bind the <Configure> event to update the blank image size when the window is resized
+        # Ràng buộc sự kiện <Configure> để cập nhật kích thước ảnh trống khi cửa sổ được thay đổi kích thước
         self.root.bind("<Configure>", self.on_resize)
         
-        # Display an initial blank black image when the app starts
+        # Hiển thị ảnh đen trống ban đầu khi ứng dụng khởi động
         self.show_blank_image()
 
     def on_resize(self, event=None):
-        # Only update the blank image if no video is currently running
+        """
+        Xử lý sự kiện thay đổi kích thước cửa sổ để cập nhật kích thước ảnh trống
+        và đảm bảo hiển thị thích ứng chính xác.
+        """
+        # Chỉ cập nhật ảnh trống nếu không có video nào đang chạy
         if not self.is_running:
             self.show_blank_image()
 
     def process_frames(self):
-        frame_skip = 2  # Process face detection every 'frame_skip' frames for performance
-        count = 0  # Frame counter
-        faces = []  # Stores detected face bounding boxes
+        """
+        Đọc các khung hình từ video, thực hiện phát hiện và nhận dạng khuôn mặt,
+        và cập nhật hiển thị Tkinter. Chạy trong một luồng riêng biệt.
+        """
+        # Thực hiện nhận dạng khuôn mặt mỗi 'frame_skip' khung hình để cải thiện hiệu suất
+        frame_skip = 5  
+        count = 0       # Bộ đếm khung hình
 
-        # Loop as long as the app is running and video capture is active
         while self.is_running and self.video_capture and self.video_capture.isOpened():
-            ret, frame = self.video_capture.read()  # Read a frame from the video source
+            ret, frame = self.video_capture.read()
 
-            # Check if the frame was read successfully
             if not ret or frame is None:
-                print("⚠️ Frame not read or empty. Displaying last valid frame.")
-                # If a frame is not read, continue to the next iteration.
-                # The self.last_good_frame_rgb will remain on display because show_frame is not called again.
-                continue  # Skip the rest of the processing for this bad frame
+                # Nếu không đọc được khung hình hoặc khung hình trống, tiếp tục vòng lặp.
+                # Khung hình hợp lệ cuối cùng sẽ tiếp tục được hiển thị.
+                print("⚠️ Không đọc được khung hình hoặc khung hình trống. Hiển thị khung hình hợp lệ cuối cùng.")
+                if self.last_good_frame_rgb is not None:
+                     self.root.after(0, self.show_frame, self.last_good_frame_rgb)
+                continue 
 
-            # If using webcam, flip the frame horizontally for a mirror effect
+            # Nếu sử dụng webcam, lật khung hình theo chiều ngang để có hiệu ứng gương
             if self.is_webcam:
                 frame = cv2.flip(frame, 1)
-
-            # Resize the frame for faster face detection (smaller image)
-            small_frame = cv2.resize(frame, (320, 240))
-            # Convert the small frame to grayscale for face detection
-            gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
-
-            # Perform face detection only on skipped frames to improve performance
-            if count % frame_skip == 0:
-                # detectMultiScale detects objects of different sizes in the input image.
-                # 1.1 is the scale factor, 5 is the minimum number of neighbors
-                faces = self.face_cascade.detectMultiScale(gray, 1.1, 5)
-
-            # Calculate scaling factors to draw bounding boxes back on the original frame size
-            scale_x = frame.shape[1] / 320
-            scale_y = frame.shape[0] / 240
-
-            # Draw rectangles around detected faces on the original frame
-            for (x, y, w, h) in faces:
-                cv2.rectangle(frame,
-                              (int(x * scale_x), int(y * scale_y)),  # Top-left corner
-                              (int((x + w) * scale_x), int((y + h) * scale_y)),  # Bottom-right corner
-                              (0, 255, 0), 2)  # Green color, 2px thickness
-
-            # Get the current dimensions of the image_label for proper resizing
+                
+            # Lấy kích thước hiện tại của image_label để thay đổi kích thước phù hợp
             label_width = self.image_label.winfo_width()
             label_height = self.image_label.winfo_height()
 
-            # Fallback for when label dimensions are not yet available (e.g., during startup)
+            # Dự phòng khi kích thước label chưa có sẵn (ví dụ: trong quá trình khởi động)
             if label_width <= 1 or label_height <= 1:
-                # Use the root window's dimensions as a fallback, or a sensible default
                 root_width = self.root.winfo_width()
                 root_height = self.root.winfo_height()
                 label_width = root_width if root_width > 1 else 640
                 label_height = root_height if root_height > 1 else 480
 
-            # Resize the processed frame to fit the image_label's dimensions
+            # Thay đổi kích thước khung hình để phù hợp với kích thước của image_label
             display_frame = cv2.resize(frame, (label_width, label_height))
-            # Convert the frame from BGR (OpenCV default) to RGB (Pillow/Tkinter compatible)
+            # Chuyển đổi khung hình từ BGR (mặc định của OpenCV) sang RGB (tương thích với Pillow/Tkinter)
             rgb_frame = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
 
-            # Store the current good frame
-            self.last_good_frame_rgb = rgb_frame
+            # --- Thực hiện nhận dạng khuôn mặt chỉ trên các khung hình đã bỏ qua ---
+            if count % frame_skip == 0:
+                # Thay đổi kích thước khung hình xuống 1/4 (hoặc tỷ lệ khác) để tăng tốc độ phát hiện và mã hóa
+                small_frame = cv2.resize(rgb_frame, (0, 0), fx=0.25, fy=0.25)
+                
+                # Tìm vị trí khuôn mặt trong khung hình nhỏ
+                self.current_face_locations = face_recognition.face_locations(small_frame)
+                # Mã hóa khuôn mặt được tìm thấy
+                current_face_encodings = face_recognition.face_encodings(small_frame, self.current_face_locations)
+                
+                self.current_face_names = []
+                for face_encoding in current_face_encodings:
+                    # Tính khoảng cách đến tất cả khuôn mặt đã biết
+                    distances = face_recognition.face_distance(self.known_encodings, face_encoding)
 
-            # Schedule the show_frame function to run on the main Tkinter thread
-            # This is crucial for thread safety when updating GUI elements
+                    # Tìm chỉ số khớp nhất
+                    best_match_index = np.argmin(distances)
+                    name = "Unknown"
+
+                    # Ngưỡng để quyết định nhận dạng (thông thường < 0.6 là tốt, < 0.5 là rất chắc chắn)
+                    if distances[best_match_index] < 0.45: 
+                        name = self.known_names[best_match_index]
+                    self.current_face_names.append(name)
+                    # print(f"[INFO] Khoảng cách tới {name}: {distances[best_match_index]:.4f}")
+            # --- Kết thúc khối nhận dạng khuôn mặt ---
+
+            # Vẽ hình chữ nhật và tên bằng cách sử dụng kết quả từ lần nhận dạng gần nhất
+            # Phóng to lại vị trí khuôn mặt vì việc phát hiện được thực hiện trên khung hình nhỏ hơn
+            for (top, right, bottom, left), name in zip(self.current_face_locations, self.current_face_names):
+                # Phóng to tọa độ khuôn mặt lên lại (ví dụ: x4 nếu fx/fy = 0.25)
+                top *= 4
+                right *= 4
+                bottom *= 4
+                left *= 4
+
+                cv2.rectangle(rgb_frame, (left, top), (right, bottom), (0, 255, 0), 2)
+                # Đặt chữ ngay dưới hộp khuôn mặt hoặc bên trong nếu hộp nhỏ
+                text_y = bottom + 20 if bottom + 20 < label_height else bottom - 10
+                cv2.putText(rgb_frame, name, (left, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+            self.last_good_frame_rgb = rgb_frame
+            
+            # Lên lịch hàm show_frame chạy trên luồng chính của Tkinter
+            # Điều này rất quan trọng để an toàn luồng khi cập nhật các phần tử GUI
             self.root.after(0, self.show_frame, rgb_frame)
             count += 1
 
-        print("🔚 Video loop ended.")
-        # When the video loop ends (e.g., video finished, stop button pressed),
-        # ensure the display is cleared and resources are released on the main thread.
+        print("🔚 Vòng lặp video đã kết thúc.")
+        # Khi vòng lặp video kết thúc (ví dụ: video hết, nhấn nút dừng),
+        # đảm bảo hiển thị được xóa và tài nguyên được giải phóng trên luồng chính.
         self.root.after(0, self.stop_video)
 
     def start_webcam(self):
         """
-        Starts the webcam feed for face detection.
+        Bắt đầu luồng webcam để phát hiện khuôn mặt.
         """
-        self.stop_video() # Stop any existing video stream
-        self.video_capture = cv2.VideoCapture(0) # Open the default webcam (index 0)
+        self.stop_video() # Dừng mọi luồng video hiện có
+        self.video_capture = cv2.VideoCapture(0) # Mở webcam mặc định (chỉ số 0)
         if self.video_capture.isOpened():
             self.is_running = True
             self.is_webcam = True
-            # Start the frame processing in a new daemon thread
-            # A daemon thread will automatically terminate when the main program exits
+            # Bắt đầu xử lý khung hình trong một luồng daemon mới
+            # Một luồng daemon sẽ tự động chấm dứt khi chương trình chính thoát
             threading.Thread(target=self.process_frames, daemon=True).start()
         else:
-            messagebox.showerror("Error", "Could not open webcam. Please check if it's connected and not in use.")
-            self.show_blank_image() # Show blank if webcam fails to open
+            messagebox.showerror("Lỗi", "Không thể mở webcam. Vui lòng kiểm tra xem nó có được kết nối và không bị sử dụng không.")
+            self.show_blank_image() # Hiển thị trống nếu webcam không mở được
 
     def load_video(self):
         """
-        Opens a file dialog to select a video file and starts processing it.
+        Mở hộp thoại chọn tệp video và bắt đầu xử lý.
         """
-        # Open a file dialog to select video files
-        file_path = filedialog.askopenfilename(filetypes=[("Video files", "*.mp4;*.avi;*.mov;*.wmv")])
-        if file_path: # If a file was selected
-            self.stop_video() # Stop any existing video stream
-            self.video_capture = cv2.VideoCapture(file_path) # Open the selected video file
+        # Mở hộp thoại tệp để chọn tệp video
+        file_path = filedialog.askopenfilename(filetypes=[("Tệp video", "*.mp4;*.avi;*.mov;*.wmv;*.mkv")])
+        if file_path: # Nếu một tệp đã được chọn
+            self.stop_video() # Dừng mọi luồng video hiện có
+            self.video_capture = cv2.VideoCapture(file_path) # Mở tệp video đã chọn
             if self.video_capture.isOpened():
                 self.is_running = True
                 self.is_webcam = False
-                # Start the frame processing in a new daemon thread
+                # Bắt đầu xử lý khung hình trong một luồng daemon mới
                 threading.Thread(target=self.process_frames, daemon=True).start()
             else:
-                messagebox.showerror("Error", "Could not open video file. The file might be corrupted or an unsupported format.")
-                self.show_blank_image() # Show blank if video file fails to open
+                messagebox.showerror("Lỗi", "Không thể mở tệp video. Tệp có thể bị hỏng hoặc không phải định dạng được hỗ trợ.")
+                self.show_blank_image() # Hiển thị trống nếu tệp video không mở được
         else:
-            self.show_blank_image() # If user cancels the file dialog, show blank
+            self.show_blank_image() # Nếu người dùng hủy hộp thoại tệp, hiển thị trống
 
     def show_frame(self, frame_rgb):
         """
-        Displays a given RGB frame in the Tkinter image_label.
-        This function is designed to be called on the main Tkinter thread.
+        Hiển thị một khung hình RGB đã cho trong image_label của Tkinter.
+        Hàm này được thiết kế để được gọi trên luồng chính của Tkinter.
 
         Args:
-            frame_rgb: A NumPy array representing the RGB image frame.
+            frame_rgb: Một mảng NumPy biểu diễn khung hình ảnh RGB.
         """
-        # Convert the NumPy array (RGB) to a Pillow Image object
+        # Chuyển đổi mảng NumPy (RGB) thành đối tượng Pillow Image
         img = Image.fromarray(frame_rgb)
-        # Convert the Pillow Image to a Tkinter PhotoImage object
+        # Chuyển đổi Pillow Image thành đối tượng Tkinter PhotoImage
         imgtk = ImageTk.PhotoImage(image=img)
-        # Store a reference to the PhotoImage object to prevent it from being garbage collected
+        # Lưu trữ tham chiếu đến đối tượng PhotoImage để ngăn nó bị thu gom rác
         self.image_label.imgtk = imgtk
-        # Update the image displayed by the Tkinter Label
+        # Cập nhật hình ảnh được hiển thị bởi Tkinter Label
         self.image_label.config(image=imgtk)
 
     def show_blank_image(self):
         """
-        Creates and displays a blank black image on the image_label.
-        Useful for initial state or when no video is playing.
+        Tạo và hiển thị một ảnh đen trống trên image_label.
+        Hữu ích cho trạng thái ban đầu hoặc khi không có video nào đang phát.
         """
-        # Get current label dimensions for the blank image
+        # Lấy kích thước label hiện tại cho ảnh trống
         label_width = self.image_label.winfo_width()
         label_height = self.image_label.winfo_height()
 
-        # Fallback for when label dimensions are not yet known (e.g., during __init__)
+        # Dự phòng khi kích thước label chưa biết (ví dụ: trong quá trình __init__)
         if label_width <= 1 or label_height <= 1:
-            # Use the root window's dimensions or a sensible default
             root_width = self.root.winfo_width()
             root_height = self.root.winfo_height()
             label_width = root_width if root_width > 1 else 640
             label_height = root_height if root_height > 1 else 480
             
-        # Create a blank black NumPy array (height, width, 3 channels for RGB)
+        # Tạo một mảng NumPy đen trống (chiều cao, chiều rộng, 3 kênh cho RGB)
         blank_img = np.zeros((label_height, label_width, 3), dtype=np.uint8)
-        # Schedule the blank image to be displayed on the main Tkinter thread
+        # Lên lịch ảnh trống được hiển thị trên luồng chính của Tkinter
         self.root.after(0, self.show_frame, blank_img)
 
 
     def stop_video(self):
         """
-        Stops the current video stream, releases resources, and clears the display.
+        Dừng luồng video hiện tại, giải phóng tài nguyên và xóa hiển thị.
         """
-        self.is_running = False # Set the flag to stop the processing loop
+        self.is_running = False # Đặt cờ để dừng vòng lặp xử lý
         if self.video_capture and self.video_capture.isOpened():
-            self.video_capture.release() # Release the video capture object
-        self.video_capture = None # Clear the reference
-        self.last_good_frame_rgb = None # Clear the last good frame
-        # Schedule clearing the display to a blank image on the main Tkinter thread
+            self.video_capture.release() # Giải phóng đối tượng video capture
+        self.video_capture = None # Xóa tham chiếu
+        self.last_good_frame_rgb = None # Xóa khung hình tốt cuối cùng
+        self.current_face_locations = [] # Xóa kết quả nhận dạng
+        self.current_face_names = []
+        # Lên lịch xóa hiển thị thành ảnh trống trên luồng chính của Tkinter
         self.root.after(0, self.show_blank_image)
 
     def exit_app(self):
         """
-        Exits the application, ensuring all resources are properly released.
+        Thoát ứng dụng, đảm bảo tất cả các tài nguyên được giải phóng đúng cách.
         """
-        self.stop_video() # Stop any active video and release resources
-        self.root.quit()  # Terminate the Tkinter main loop
+        self.stop_video() # Dừng mọi video đang hoạt động và giải phóng tài nguyên
+        self.root.destroy() # Thoát cửa sổ Tkinter
 
-#Images encoding
-folder_path = filedialog.askdirectory(title="Select a Folder with Images")
-portraits = []
-for filename in os.listdir(folder_path):
-    file_path = os.path.join(folder_path, filename)
-    image = face_recognition.load_image_file(file_path)
-    encoding = face_recognition.face_encodings(image)
-    name = os.path.splitext(filename)[0]
-    portraits.append([name, encoding])
 
 if __name__ == '__main__':
-    root = tk.Tk() # Create the main Tkinter window
-    app = FaceDetectionApp(root) # Create an instance of the FaceDetectionApp
-    root.mainloop() # Start the Tkinter event loop
+    root = tk.Tk() # Tạo cửa sổ Tkinter chính
+    app = FaceDetectionApp(root) # Tạo một thể hiện của FaceDetectionApp
+    root.mainloop() # Bắt đầu vòng lặp sự kiện Tkinter
