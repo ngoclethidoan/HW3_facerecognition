@@ -1,11 +1,31 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import cv2
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageFont, ImageDraw
 import threading
 import numpy as np
-import pickle
+import os
 import face_recognition
+
+def put_text_unicode(cv2_img, text, position, font_path="arial.ttf", font_size=20, color=(0,255,0)):
+    """
+    Vẽ chữ Unicode (có dấu) lên ảnh OpenCV bằng Pillow.
+    cv2_img: ảnh OpenCV (BGR)
+    text: chuỗi cần vẽ
+    position: (x, y) vị trí bắt đầu vẽ chữ
+    font_path: đường dẫn tới file font .ttf (phải hỗ trợ tiếng Việt)
+    font_size: kích cỡ chữ
+    color: màu chữ RGB (mặc định xanh lá)
+    """
+    img_pil = Image.fromarray(cv2.cvtColor(cv2_img, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(img_pil)
+    try:
+        font = ImageFont.truetype(font_path, font_size)
+    except IOError:
+        font = ImageFont.load_default()
+    draw.text(position, text, font=font, fill=color[::-1])
+    img_cv2 = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+    return img_cv2
 
 class FaceDetectionApp:
     """
@@ -19,21 +39,6 @@ class FaceDetectionApp:
         Args:
             root: Cửa sổ Tkinter chính.
         """
-        # Tải dữ liệu mã hóa khuôn mặt đã biết
-        try:
-            with open("encodings.pkl", "rb") as f:
-                data = pickle.load(f)
-            self.known_encodings = data["encodings"]
-            self.known_names = data["names"]
-            print(f"[INFO] Đã tải {len(self.known_encodings)} mã hóa khuôn mặt và tên.")
-        except FileNotFoundError:
-            messagebox.showerror("Lỗi", "Không tìm thấy file 'encodings.pkl'. Vui lòng đảm bảo file này tồn tại.")
-            self.known_encodings = []
-            self.known_names = []
-        except Exception as e:
-            messagebox.showerror("Lỗi", f"Không thể tải 'encodings.pkl': {e}")
-            self.known_encodings = []
-            self.known_names = []
 
         self.root = root
         self.root.title("Face Recognition (Optimized)")
@@ -65,11 +70,12 @@ class FaceDetectionApp:
         filemenu = tk.Menu(menubar, tearoff=0)
 
         # Thêm lệnh vào menu File
-        filemenu.add_command(label="Mở Video", command=self.load_video)
+        filemenu.add_command(label="Load Known Faces", command=self.load_known_faces)
+        filemenu.add_command(label="Open Video", command=self.load_video)
         filemenu.add_command(label="Webcam", command=self.start_webcam)
-        filemenu.add_command(label="Dừng", command=self.stop_video)
+        filemenu.add_command(label="Stop", command=self.stop_video)
         filemenu.add_separator()
-        filemenu.add_command(label="Thoát", command=self.exit_app)
+        filemenu.add_command(label="Exit", command=self.exit_app)
         
         menubar.add_cascade(label="Menu", menu=filemenu)
         root.config(menu=menubar)
@@ -79,6 +85,29 @@ class FaceDetectionApp:
         
         # Hiển thị ảnh đen trống ban đầu khi ứng dụng khởi động
         self.show_blank_image()
+    def load_known_faces(self):
+        folder_path = filedialog.askdirectory(title="Select Folder with Known Faces")
+        if not folder_path:
+            return
+        self.known_encodings = []
+        self.known_names = []
+
+        for filename in os.listdir(folder_path):
+            file_path = os.path.join(folder_path, filename)
+            try:
+                image = face_recognition.load_image_file(file_path)
+                encodings = face_recognition.face_encodings(image)
+                if encodings:
+                    self.known_encodings.append(encodings[0])
+                    name = os.path.splitext(filename)[0]
+                    self.known_names.append(name)
+                else:
+                    print(f"⚠️ No faces found in {filename}")
+            except Exception as e:
+                print(f"Error loading {filename}: {e}")
+
+        messagebox.showinfo("Info", f"Loaded {len(self.known_encodings)} known faces.")
+
 
     def on_resize(self, event=None):
         """
@@ -167,7 +196,7 @@ class FaceDetectionApp:
                 cv2.rectangle(rgb_frame, (left, top), (right, bottom), (0, 255, 0), 2)
                 # Đặt chữ ngay dưới hộp khuôn mặt hoặc bên trong nếu hộp nhỏ
                 text_y = bottom + 20 if bottom + 20 < label_height else bottom - 10
-                cv2.putText(rgb_frame, name, (left, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                rgb_frame = put_text_unicode(rgb_frame, name, (left +4, bottom - 27), font_path="arial.ttf", font_size=20, color=(0, 255, 0))
 
             self.last_good_frame_rgb = rgb_frame
             
