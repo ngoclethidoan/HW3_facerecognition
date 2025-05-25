@@ -20,7 +20,7 @@ class FaceDetectionApp:
         self.root = root
         self.root.title("Face Detection (Optimized)")
         # Set initial geometry, will be adjusted by image_label.pack(expand=True, fill=tk.BOTH)
-        self.root.geometry("640x480") 
+        self.root.geometry("600x400") 
 
         # Load the pre-trained Haar Cascade classifier for face detection
         # This path points to the default Haar Cascade XML file provided by OpenCV
@@ -135,6 +135,101 @@ class FaceDetectionApp:
         # When the video loop ends (e.g., video finished, stop button pressed),
         # ensure the display is cleared and resources are released on the main thread.
         self.root.after(0, self.stop_video)
+
+    def start_webcam(self):
+        """
+        Starts the webcam feed for face detection.
+        """
+        self.stop_video() # Stop any existing video stream
+        self.video_capture = cv2.VideoCapture(0) # Open the default webcam (index 0)
+        if self.video_capture.isOpened():
+            self.is_running = True
+            self.is_webcam = True
+            # Start the frame processing in a new daemon thread
+            # A daemon thread will automatically terminate when the main program exits
+            threading.Thread(target=self.process_frames, daemon=True).start()
+        else:
+            messagebox.showerror("Error", "Could not open webcam. Please check if it's connected and not in use.")
+            self.show_blank_image() # Show blank if webcam fails to open
+
+    def load_video(self):
+        """
+        Opens a file dialog to select a video file and starts processing it.
+        """
+        # Open a file dialog to select video files
+        file_path = filedialog.askopenfilename(filetypes=[("Video files", "*.mp4;*.avi;*.mov;*.wmv")])
+        if file_path: # If a file was selected
+            self.stop_video() # Stop any existing video stream
+            self.video_capture = cv2.VideoCapture(file_path) # Open the selected video file
+            if self.video_capture.isOpened():
+                self.is_running = True
+                self.is_webcam = False
+                # Start the frame processing in a new daemon thread
+                threading.Thread(target=self.process_frames, daemon=True).start()
+            else:
+                messagebox.showerror("Error", "Could not open video file. The file might be corrupted or an unsupported format.")
+                self.show_blank_image() # Show blank if video file fails to open
+        else:
+            self.show_blank_image() # If user cancels the file dialog, show blank
+
+    def show_frame(self, frame_rgb):
+        """
+        Displays a given RGB frame in the Tkinter image_label.
+        This function is designed to be called on the main Tkinter thread.
+
+        Args:
+            frame_rgb: A NumPy array representing the RGB image frame.
+        """
+        # Convert the NumPy array (RGB) to a Pillow Image object
+        img = Image.fromarray(frame_rgb)
+        # Convert the Pillow Image to a Tkinter PhotoImage object
+        imgtk = ImageTk.PhotoImage(image=img)
+        # Store a reference to the PhotoImage object to prevent it from being garbage collected
+        self.image_label.imgtk = imgtk
+        # Update the image displayed by the Tkinter Label
+        self.image_label.config(image=imgtk)
+
+    def show_blank_image(self):
+        """
+        Creates and displays a blank black image on the image_label.
+        Useful for initial state or when no video is playing.
+        """
+        # Get current label dimensions for the blank image
+        label_width = self.image_label.winfo_width()
+        label_height = self.image_label.winfo_height()
+
+        # Fallback for when label dimensions are not yet known (e.g., during __init__)
+        if label_width <= 1 or label_height <= 1:
+            # Use the root window's dimensions or a sensible default
+            root_width = self.root.winfo_width()
+            root_height = self.root.winfo_height()
+            label_width = root_width if root_width > 1 else 640
+            label_height = root_height if root_height > 1 else 480
+            
+        # Create a blank black NumPy array (height, width, 3 channels for RGB)
+        blank_img = np.zeros((label_height, label_width, 3), dtype=np.uint8)
+        # Schedule the blank image to be displayed on the main Tkinter thread
+        self.root.after(0, self.show_frame, blank_img)
+
+
+    def stop_video(self):
+        """
+        Stops the current video stream, releases resources, and clears the display.
+        """
+        self.is_running = False # Set the flag to stop the processing loop
+        if self.video_capture and self.video_capture.isOpened():
+            self.video_capture.release() # Release the video capture object
+        self.video_capture = None # Clear the reference
+        self.last_good_frame_rgb = None # Clear the last good frame
+        # Schedule clearing the display to a blank image on the main Tkinter thread
+        self.root.after(0, self.show_blank_image)
+
+    def exit_app(self):
+        """
+        Exits the application, ensuring all resources are properly released.
+        """
+        self.stop_video() # Stop any active video and release resources
+        self.root.quit()  # Terminate the Tkinter main loop
 
 
 if __name__ == '__main__':
