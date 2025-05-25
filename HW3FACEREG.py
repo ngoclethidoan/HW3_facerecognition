@@ -7,7 +7,7 @@ import numpy as np
 import os
 import face_recognition
 
-def put_text_unicode(cv2_img, text, position, font_path="arial.ttf", font_size=20, color=(0,255,0)):
+def put_text_unicode(cv2_img, text, position, font_path="arial.ttf", font_size=20, color=(0, 255, 0)):
     """
     Vẽ chữ Unicode (có dấu) lên ảnh OpenCV bằng Pillow.
     cv2_img: ảnh OpenCV (BGR)
@@ -24,16 +24,18 @@ def put_text_unicode(cv2_img, text, position, font_path="arial.ttf", font_size=2
     except IOError:
         font = ImageFont.load_default()
     draw.text(position, text, font=font, fill=color[::-1])
-    img_cv2 = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
-    return img_cv2
-
-
+    return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
 
 class FaceDetectionApp:
     """
     Ứng dụng Tkinter để phát hiện và nhận dạng khuôn mặt theo thời gian thực từ tệp video hoặc webcam.
     Được tối ưu hóa để ngăn chặn khung hình trắng và đảm bảo hiển thị mượt mà.
     """
+    FRAME_SKIP = 5
+    FONT_PATH = "arial.ttf"
+    FONT_SIZE = 20
+    MATCH_THRESHOLD = 0.45
+
     def __init__(self, root):
         """
         Khởi tạo FaceDetectionApp.
@@ -45,13 +47,15 @@ class FaceDetectionApp:
         self.root.title("Face Recognition (Optimized)")
 
         # Đặt kích thước cửa sổ theo kích thước màn hình
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        self.root.geometry(f"{screen_width}x{screen_height}+0+0")
+        self.root.geometry(f"{root.winfo_screenwidth()}x{root.winfo_screenheight()}+0+0")
+
+        # Khởi tạo dữ liệu khuôn mặt
+        self.known_encodings = []
+        self.known_names = []
 
         # Load bộ phân loại Haar Cascade cho phát hiện khuôn mặt (chưa dùng trong code này)
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        
+
         self.video_capture = None  # Lưu trữ đối tượng OpenCV VideoCapture
         self.is_running = False    # Cờ điều khiển vòng lặp xử lý video
         self.is_webcam = False     # Cờ phân biệt giữa đầu vào webcam và tệp video
@@ -65,9 +69,15 @@ class FaceDetectionApp:
         # Đặt nền đen để tránh nháy trắng khi không có khung hình nào được hiển thị
         self.image_label = tk.Label(root, bg="black")
         self.image_label.pack(expand=True, fill=tk.BOTH)
+    
+        #Thiết lập thanh menu
+        self.setup_menu()
+        self.root.bind("<Configure>", self.on_resize)
+        self.show_blank_image()
 
+    def setup_menu(self):
         # Tạo thanh menu
-        menubar = tk.Menu(root)
+        menubar = tk.Menu(self.root)
         filemenu = tk.Menu(menubar, tearoff=0)
 
         # Thêm lệnh vào menu File
@@ -77,36 +87,29 @@ class FaceDetectionApp:
         filemenu.add_command(label="Dừng", command=self.stop_video)
         filemenu.add_separator()
         filemenu.add_command(label="Thoát", command=self.exit_app)
-        
-        menubar.add_cascade(label="Menu", menu=filemenu)
-        root.config(menu=menubar)
 
-        # Ràng buộc sự kiện <Configure> để cập nhật kích thước ảnh trống khi cửa sổ được thay đổi kích thước
-        self.root.bind("<Configure>", self.on_resize)
-        
-        # Hiển thị ảnh đen trống ban đầu khi ứng dụng khởi động
-        self.show_blank_image()
+        menubar.add_cascade(label="Menu", menu=filemenu)
+        self.root.config(menu=menubar)
+
     def load_known_faces(self):
         folder_path = filedialog.askdirectory(title="Select Folder with Known Faces")
         if not folder_path:
             return
-        self.known_encodings = []
-        self.known_names = []
+        self.known_encodings.clear()
+        self.known_names.clear()
 
         for filename in os.listdir(folder_path):
-            file_path = os.path.join(folder_path, filename)
+            path = os.path.join(folder_path, filename)
             try:
-                image = face_recognition.load_image_file(file_path)
+                image = face_recognition.load_image_file(path)
                 encodings = face_recognition.face_encodings(image)
                 if encodings:
                     self.known_encodings.append(encodings[0])
-                    name = os.path.splitext(filename)[0]
-                    self.known_names.append(name)
+                    self.known_names.append(os.path.splitext(filename)[0])
                 else:
                     print(f"⚠️ No faces found in {filename}")
             except Exception as e:
                 print(f"Error loading {filename}: {e}")
-
         messagebox.showinfo("Info", f"Loaded {len(self.known_encodings)} known faces.")
 
     def on_resize(self, event=None):
@@ -124,91 +127,89 @@ class FaceDetectionApp:
         và cập nhật hiển thị Tkinter. Chạy trong một luồng riêng biệt.
         """
         # Thực hiện nhận dạng khuôn mặt mỗi 'frame_skip' khung hình để cải thiện hiệu suất
-        frame_skip = 5  
-        count = 0       # Bộ đếm khung hình
-
+        count = 0   # Bộ đếm khung hình
         while self.is_running and self.video_capture and self.video_capture.isOpened():
             ret, frame = self.video_capture.read()
-
             if not ret or frame is None:
                 # Nếu không đọc được khung hình hoặc khung hình trống, tiếp tục vòng lặp.
                 # Khung hình hợp lệ cuối cùng sẽ tiếp tục được hiển thị.
-                print("⚠️ Không đọc được khung hình hoặc khung hình trống. Hiển thị khung hình hợp lệ cuối cùng.")
                 if self.last_good_frame_rgb is not None:
-                     self.root.after(0, self.show_frame, self.last_good_frame_rgb)
-                continue 
-
+                    self.root.after(0, self.show_frame, self.last_good_frame_rgb)
+                continue
+            
             # Nếu sử dụng webcam, lật khung hình theo chiều ngang để có hiệu ứng gương
             if self.is_webcam:
                 frame = cv2.flip(frame, 1)
-                
+
             # Lấy kích thước hiện tại của image_label để thay đổi kích thước phù hợp
             label_width = self.image_label.winfo_width()
             label_height = self.image_label.winfo_height()
-
             # Dự phòng khi kích thước label chưa có sẵn (ví dụ: trong quá trình khởi động)
             if label_width <= 1 or label_height <= 1:
-                root_width = self.root.winfo_width()
-                root_height = self.root.winfo_height()
-                label_width = root_width if root_width > 1 else 640
-                label_height = root_height if root_height > 1 else 480
-
+                label_width = max(self.root.winfo_width(), 640)
+                label_height = max(self.root.winfo_height(), 480)
+                
             # Thay đổi kích thước khung hình để phù hợp với kích thước của image_label
-            display_frame = cv2.resize(frame, (label_width, label_height))
+            frame = cv2.resize(frame, (label_width, label_height))
             # Chuyển đổi khung hình từ BGR (mặc định của OpenCV) sang RGB (tương thích với Pillow/Tkinter)
-            rgb_frame = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
             # --- Thực hiện nhận dạng khuôn mặt chỉ trên các khung hình đã bỏ qua ---
-            if count % frame_skip == 0:
-                # Thay đổi kích thước khung hình xuống 1/4 (hoặc tỷ lệ khác) để tăng tốc độ phát hiện và mã hóa
-                small_frame = cv2.resize(rgb_frame, (0, 0), fx=0.25, fy=0.25)
-                
-                # Tìm vị trí khuôn mặt trong khung hình nhỏ
-                self.current_face_locations = face_recognition.face_locations(small_frame)
-                # Mã hóa khuôn mặt được tìm thấy
-                current_face_encodings = face_recognition.face_encodings(small_frame, self.current_face_locations)
-                
-                self.current_face_names = []
-                for face_encoding in current_face_encodings:
-                    # Tính khoảng cách đến tất cả khuôn mặt đã biết
-                    distances = face_recognition.face_distance(self.known_encodings, face_encoding)
+            if count % self.FRAME_SKIP == 0:
+                self.detect_faces(rgb_frame)
 
-                    # Tìm chỉ số khớp nhất
-                    best_match_index = np.argmin(distances)
-                    name = "Unknown"
-
-                    # Ngưỡng để quyết định nhận dạng (thông thường < 0.6 là tốt, < 0.5 là rất chắc chắn)
-                    if distances[best_match_index] < 0.45: 
-                        name = self.known_names[best_match_index]
-                    self.current_face_names.append(name)
-                    # print(f"[INFO] Khoảng cách tới {name}: {distances[best_match_index]:.4f}")
-            # --- Kết thúc khối nhận dạng khuôn mặt ---
-
-            # Vẽ hình chữ nhật và tên bằng cách sử dụng kết quả từ lần nhận dạng gần nhất
-            # Phóng to lại vị trí khuôn mặt vì việc phát hiện được thực hiện trên khung hình nhỏ hơn
-            for (top, right, bottom, left), name in zip(self.current_face_locations, self.current_face_names):
-                # Phóng to tọa độ khuôn mặt lên lại (ví dụ: x4 nếu fx/fy = 0.25)
-                top *= 4
-                right *= 4
-                bottom *= 4
-                left *= 4
-
-                cv2.rectangle(rgb_frame, (left, top), (right, bottom), (0, 255, 0), 2)
-                # Đặt chữ ngay dưới hộp khuôn mặt hoặc bên trong nếu hộp nhỏ
-                text_y = bottom + 20 if bottom + 20 < label_height else bottom - 10
-                rgb_frame = put_text_unicode(rgb_frame, name, (left +4, bottom - 27), font_path="arial.ttf", font_size=20, color=(0, 255, 0))
-
+            # Vẽ hình chữ nhật quanh khuôn mặt đã phát hiện
+            self.draw_faces(rgb_frame, label_height)
+            # Lưu lại khung hình RGB hiện tại (đã nhận dạng, đã vẽ chữ) làm khung hình hiển thị dự phòng.
             self.last_good_frame_rgb = rgb_frame
-            
-            # Lên lịch hàm show_frame chạy trên luồng chính của Tkinter
-            # Điều này rất quan trọng để an toàn luồng khi cập nhật các phần tử GUI
+            # Lên lịch hiển thị khung hình (rgb_frame) trên giao diện Tkinter.
             self.root.after(0, self.show_frame, rgb_frame)
             count += 1
-
-        print("🔚 Vòng lặp video đã kết thúc.")
-        # Khi vòng lặp video kết thúc (ví dụ: video hết, nhấn nút dừng),
-        # đảm bảo hiển thị được xóa và tài nguyên được giải phóng trên luồng chính.
+            
+        # Khi kết thúc video, dừng lại và giải phóng tài nguyên
         self.root.after(0, self.stop_video)
+
+    def detect_faces(self, rgb_frame):
+        small_frame = cv2.resize(rgb_frame, (0, 0), fx=0.25, fy=0.25)
+        self.current_face_locations = face_recognition.face_locations(small_frame)
+        encodings = face_recognition.face_encodings(small_frame, self.current_face_locations)
+
+        self.current_face_names = []
+        for encoding in encodings:
+            if not self.known_encodings:
+                self.current_face_names.append("Unknown")
+                continue
+            distances = face_recognition.face_distance(self.known_encodings, encoding)
+            best_match_index = np.argmin(distances)
+            name = "Unknown"
+            if distances[best_match_index] < self.MATCH_THRESHOLD:
+                name = self.known_names[best_match_index]
+            self.current_face_names.append(name)
+
+    def draw_faces(self, frame, max_height):
+        for (top, right, bottom, left), name in zip(self.current_face_locations, self.current_face_names):
+            top, right, bottom, left = [v * 4 for v in (top, right, bottom, left)]
+            cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+            y_text = bottom + 20 if bottom + 20 < max_height else bottom - 10
+            frame = put_text_unicode(frame, name, (left + 4, y_text - 27),
+                                     font_path=self.FONT_PATH, font_size=self.FONT_SIZE, color=(0, 255, 0))
+
+    def show_frame(self, frame_rgb):
+        img = Image.fromarray(frame_rgb)
+        imgtk = ImageTk.PhotoImage(image=img)
+        self.image_label.imgtk = imgtk
+        self.image_label.config(image=imgtk)
+
+    def show_blank_image(self):
+        label_width = self.image_label.winfo_width()
+        label_height = self.image_label.winfo_height()
+
+        if label_width <= 1 or label_height <= 1:
+            label_width = max(self.root.winfo_width(), 640)
+            label_height = max(self.root.winfo_height(), 480)
+
+        blank_img = np.zeros((label_height, label_width, 3), dtype=np.uint8)
+        self.root.after(0, self.show_frame, blank_img)
 
     def start_webcam(self):
         """
