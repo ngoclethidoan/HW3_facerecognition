@@ -27,6 +27,8 @@ def put_text_unicode(cv2_img, text, position, font_path="arial.ttf", font_size=2
     img_cv2 = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
     return img_cv2
 
+
+
 class FaceDetectionApp:
     """
     Ứng dụng Tkinter để phát hiện và nhận dạng khuôn mặt theo thời gian thực từ tệp video hoặc webcam.
@@ -39,7 +41,6 @@ class FaceDetectionApp:
         Args:
             root: Cửa sổ Tkinter chính.
         """
-
         self.root = root
         self.root.title("Face Recognition (Optimized)")
 
@@ -71,11 +72,11 @@ class FaceDetectionApp:
 
         # Thêm lệnh vào menu File
         filemenu.add_command(label="Load Known Faces", command=self.load_known_faces)
-        filemenu.add_command(label="Open Video", command=self.load_video)
+        filemenu.add_command(label="Mở Video", command=self.load_video)
         filemenu.add_command(label="Webcam", command=self.start_webcam)
-        filemenu.add_command(label="Stop", command=self.stop_video)
+        filemenu.add_command(label="Dừng", command=self.stop_video)
         filemenu.add_separator()
-        filemenu.add_command(label="Exit", command=self.exit_app)
+        filemenu.add_command(label="Thoát", command=self.exit_app)
         
         menubar.add_cascade(label="Menu", menu=filemenu)
         root.config(menu=menubar)
@@ -107,7 +108,6 @@ class FaceDetectionApp:
                 print(f"Error loading {filename}: {e}")
 
         messagebox.showinfo("Info", f"Loaded {len(self.known_encodings)} known faces.")
-
 
     def on_resize(self, event=None):
         """
