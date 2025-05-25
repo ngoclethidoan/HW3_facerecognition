@@ -231,6 +231,15 @@ class FaceDetectionApp:
         self.stop_video() # Stop any active video and release resources
         self.root.quit()  # Terminate the Tkinter main loop
 
+#Images encoding
+folder_path = filedialog.askdirectory(title="Select a Folder with Images")
+portraits = []
+for filename in os.listdir(folder_path):
+    file_path = os.path.join(folder_path, filename)
+    image = face_recognition.load_image_file(file_path)
+    encoding = face_recognition.face_encodings(image)
+    name = os.path.splitext(filename)[0]
+    portraits.append([name, encoding])
 
 if __name__ == '__main__':
     root = tk.Tk() # Create the main Tkinter window
